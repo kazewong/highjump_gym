@@ -47,6 +47,10 @@ from highjump_gym.loader import DEFAULT_BAR_HEIGHT, merge_with_arena
 ATHLETE_BODY = "athlete"
 ATHLETE_JOINT = "athlete_free"
 
+# Upright-torso takeoff for the articulated rung: pitch up this much at takeoff
+# and rotate toward flat by the apex, so the body sweeps over the bar.
+ARTICULATED_TAKEOFF_ROTATION_DEG = 80.0
+
 
 @dataclass
 class Takeoff:
@@ -192,6 +196,30 @@ def _smoothstep(x: float) -> float:
     return x * x * (3.0 - 2.0 * x)
 
 
+def _axis_angle(axis: np.ndarray, angle: float) -> np.ndarray:
+    q = np.zeros(4)
+    mujoco.mju_axisAngle2Quat(q, axis, angle)
+    return q
+
+
+def _quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    q = np.zeros(4)
+    mujoco.mju_mulQuat(q, a, b)
+    return q
+
+
+def _rotate(vec: np.ndarray, quat: np.ndarray) -> np.ndarray:
+    r = np.zeros(3)
+    mujoco.mju_rotVecQuat(r, vec, quat)
+    return r
+
+
+def _quat_conj(quat: np.ndarray) -> np.ndarray:
+    q = np.zeros(4)
+    mujoco.mju_negQuat(q, quat)
+    return q
+
+
 def _scene_refs(model: mujoco.MjModel) -> tuple[np.ndarray, float]:
     """COM offset of the athlete from its free-joint origin, and the bar's x."""
     data = mujoco.MjData(model)
@@ -211,6 +239,7 @@ def simulate(
     duration: float = 1.2,
     approach_angle_deg: float = 30.0,
     from_left: bool = True,
+    takeoff_rotation_deg: float = 0.0,
 ) -> Rollout:
     """Launch the athlete ballistically from ``takeoff`` and record the rollout.
 
@@ -220,9 +249,14 @@ def simulate(
     of the bar the athlete enters from. The takeoff point is chosen so the COM
     apex passes over the centre of the bar, making "does it clear" well posed.
 
+    ``takeoff_rotation_deg`` makes the body take off pitched up by that angle
+    (an upright torso) and rotate forward toward horizontal by the apex, driven
+    by takeoff angular momentum -- so the body sweeps over the bar rather than
+    crossing flat all at once. 0 keeps it flat throughout. The COM velocity is
+    held equal to the launch velocity regardless of the spin.
+
     ``controller`` defaults to a passive (no-drive) model; an articulated body
-    is driven by a :class:`ScriptedArch`. The body starts straight with zero
-    joint velocity, so its COM velocity at takeoff equals the launch velocity.
+    is driven by a :class:`ScriptedArch`.
     """
     if controller is None:
         controller = ConstantActivation(level=0.0, name=name)
@@ -236,17 +270,29 @@ def simulate(
     side = -1.0 if from_left else 1.0
     heading = np.array([math.sin(a), side * math.cos(a), 0.0])
 
-    # Yaw the body about z so its local-x long axis points along the heading.
+    # Apex orientation: yaw the local-x long axis onto the heading (flat).
     yaw = math.atan2(heading[1], heading[0])
-    quat = np.array([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)])
-    world_offset = np.zeros(3)
-    mujoco.mju_rotVecQuat(world_offset, local_offset, quat)
+    q_apex = _axis_angle(np.array([0.0, 0.0, 1.0]), yaw)
 
-    # Global launch velocity, and a takeoff point putting the COM apex over the
-    # centre of the bar (x = bar_x, y = 0 at t_apex).
+    # Somersault axis: horizontal, perpendicular to the heading. The body takes
+    # off pitched up by `rot` about it (upright) and rotates back to flat over
+    # t_apex; angular momentum (constant) carries the rotation.
+    pitch_axis = np.array([heading[1], -heading[0], 0.0])
+    rot = math.radians(takeoff_rotation_deg)
+    q0 = _quat_mul(_axis_angle(pitch_axis, rot), q_apex)
+    omega_world = -(rot / t_apex) * pitch_axis if t_apex > 0 else np.zeros(3)
+
+    # Takeoff point so the COM apex is over the bar centre (x=bar_x, y=0).
+    world_offset = _rotate(local_offset, q0)
     vel = takeoff.vx * heading + np.array([0.0, 0.0, takeoff.vz])
     com0 = np.array([bar_x - vel[0] * t_apex, -vel[1] * t_apex, takeoff.com_height])
     root_pos = com0 - world_offset
+
+    # Free-joint velocities: keep the COM velocity equal to `vel` despite the
+    # spin (v_com = v_root + omega x r_com), and express the angular velocity in
+    # the local body frame (MuJoCo free-joint convention).
+    v_root = vel - np.cross(omega_world, world_offset)
+    omega_local = _rotate(omega_world, _quat_conj(q0))
 
     jid = model.joint(ATHLETE_JOINT).id
     q = int(model.jnt_qposadr[jid])
@@ -254,9 +300,9 @@ def simulate(
 
     def init(model: mujoco.MjModel, data: mujoco.MjData) -> None:
         data.qpos[q : q + 3] = root_pos
-        data.qpos[q + 3 : q + 7] = quat
-        data.qvel[d : d + 3] = vel
-        data.qvel[d + 3 : d + 6] = 0.0
+        data.qpos[q + 3 : q + 7] = q0
+        data.qvel[d : d + 3] = v_root
+        data.qvel[d + 3 : d + 6] = omega_local
 
     return rollout(
         model,
@@ -288,7 +334,8 @@ def compare(takeoff: Takeoff | None = None, clearance_margin: float = 0.12) -> N
                                name="rigid-arch"),
         "articulated": simulate(build_articulated(bar_height=bar), takeoff,
                                 name="articulated",
-                                controller=ScriptedArch(t_full=t_apex)),
+                                controller=ScriptedArch(t_full=t_apex),
+                                takeoff_rotation_deg=ARTICULATED_TAKEOFF_ROTATION_DEG),
     }
 
     print(f"takeoff: speed={takeoff.speed} m/s  angle={takeoff.angle_deg} deg  "

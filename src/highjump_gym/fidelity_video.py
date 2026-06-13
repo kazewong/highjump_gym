@@ -21,6 +21,7 @@ import mujoco
 import numpy as np
 
 from highjump_gym.fidelity import (
+    ARTICULATED_TAKEOFF_ROTATION_DEG,
     ScriptedArch,
     Takeoff,
     build_articulated,
@@ -76,18 +77,19 @@ def main() -> None:
     com_apex = takeoff.com_height + takeoff.vz**2 / (2 * GRAVITY)
     bar_height = com_apex + 0.12  # match compare(): bar just above the COM apex
 
+    # (name, model, controller, takeoff_rotation_deg)
     jobs = [
-        ("point_mass", build_point_mass(bar_height=bar_height), None),
-        ("rigid_arch", build_rigid_arch(bar_height=bar_height), None),
+        ("point_mass", build_point_mass(bar_height=bar_height), None, 0.0),
+        ("rigid_arch", build_rigid_arch(bar_height=bar_height), None, 0.0),
         ("articulated", build_articulated(bar_height=bar_height),
-         ScriptedArch(t_full=t_apex)),
+         ScriptedArch(t_full=t_apex), ARTICULATED_TAKEOFF_ROTATION_DEG),
     ]
 
     print(f"bar at {bar_height:.3f} m (COM apex {com_apex:.3f} m)")
-    for name, model, controller in jobs:
+    for name, model, controller, rotation in jobs:
         r = simulate(
             model, takeoff, name=name, controller=controller,
-            duration=RENDER_SECONDS,
+            duration=RENDER_SECONDS, takeoff_rotation_deg=rotation,
         )
         render_rollout(model, r, f"fidelity_{name}.mp4", bar_height)
         print(f"  {name}: bar knocked = {bar_knocked(r)}")
