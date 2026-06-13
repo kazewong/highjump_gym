@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# highjump_gym: smoke-test / render artifacts
+*.mp4
+highjump_smoke.mp4
