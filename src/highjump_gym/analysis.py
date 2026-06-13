@@ -42,10 +42,12 @@ def bar_displacement(r: Rollout) -> float:
     return float(np.linalg.norm(r.bar_pos - r.bar_pos[0], axis=1).max())
 
 
-def bar_knocked(r: Rollout, drop_threshold: float = 0.1) -> bool:
-    """True if the crossbar ever falls more than ``drop_threshold`` below rest."""
-    z0 = r.bar_pos[0, VERTICAL_AXIS]
-    return bool((z0 - r.bar_pos[:, VERTICAL_AXIS]).max() > drop_threshold)
+def bar_knocked(r: Rollout, displacement_threshold: float = 0.05) -> bool:
+    """True if the crossbar is displaced off its rest pose by more than the
+    threshold (m). Uses total displacement, not just vertical drop, since a clip
+    often bats the light bar sideways/forward off its pegs before it falls; a
+    resting bar only jitters by ~mm, well under the threshold."""
+    return bar_displacement(r) > displacement_threshold
 
 
 def peak_body_top(r: Rollout) -> float:

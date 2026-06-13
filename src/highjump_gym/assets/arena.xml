@@ -57,9 +57,11 @@
          creeping off on its own, while a real clip still knocks it down. -->
     <body name="crossbar" pos="1.0 0 2.024">
       <freejoint name="crossbar_free"/>
+      <!-- conaffinity=3: bit 0 collides with the pegs/floor it rests on; bit 1
+           collides with athlete bodies (contype=2) so a clip knocks the bar. -->
       <geom name="crossbar" class="arena" type="capsule" fromto="0 -2.0 0 0 2.0 0"
             size="0.015" mass="0.5" condim="6" friction="1.0 0.02 0.02"
-            material="mat_bar"/>
+            conaffinity="3" material="mat_bar"/>
     </body>
   </worldbody>
 </mujoco>

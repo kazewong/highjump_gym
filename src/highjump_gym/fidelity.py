@@ -13,9 +13,11 @@ This module builds two low-fidelity athletes that plug into the same
 * ``build_point_mass`` -- a single sphere (COM only).
 * ``build_rigid_arch`` -- a rigid, downward-draping arch spanning the bar.
 
-Both are launched ballistically (no actuators, no collisions) from the same
-takeoff COM state, so the comparison isolates body geometry. The full
-MS-Human-700 model is the top rung, added once it has a real controller.
+Both are launched ballistically from the same takeoff COM state, so the
+comparison isolates body geometry. They collide with the crossbar (but nothing
+else -- no floor/standards), so a clip actually knocks the bar off and "topping
+the bar" is distinguished from cleanly clearing it. The full MS-Human-700 model
+is the top rung, added once it has a real controller.
 
     uv run python -m highjump_gym.fidelity
 """
@@ -29,6 +31,7 @@ import mujoco
 import numpy as np
 
 from highjump_gym.analysis import (
+    bar_knocked,
     body_reach_over_com,
     peak_body_top,
     peak_com_height,
@@ -63,7 +66,7 @@ class Takeoff:
 
 
 def _athlete_model(body_xml: str, bar_height: float) -> mujoco.MjModel:
-    """Wrap an athlete body (one free body, non-colliding geoms) in the arena."""
+    """Wrap an athlete body (one free body, bar-only collision) in the arena."""
     spec = mujoco.MjSpec.from_string(
         f'<mujoco model="athlete">\n'
         f'  <worldbody>\n'
@@ -83,7 +86,7 @@ def build_point_mass(
     """A single sphere: the COM with essentially no extent."""
     geom = (
         f'      <geom name="pm" type="sphere" size="{radius}" '
-        f'contype="0" conaffinity="0" rgba="0.9 0.3 0.3 1"/>\n'
+        f'contype="2" conaffinity="0" rgba="0.9 0.3 0.3 1"/>\n'
     )
     return _athlete_model(geom, bar_height)
 
@@ -108,7 +111,7 @@ def build_rigid_arch(
     segments = "".join(
         f'      <geom type="capsule" size="{radius}" '
         f'fromto="{xs[i]:.4f} 0 {zs[i]:.4f} {xs[i + 1]:.4f} 0 {zs[i + 1]:.4f}" '
-        f'contype="0" conaffinity="0" rgba="0.3 0.5 0.9 1"/>\n'
+        f'contype="2" conaffinity="0" rgba="0.3 0.5 0.9 1"/>\n'
         for i in range(n_seg)
     )
     return _athlete_model(segments, bar_height)
@@ -122,13 +125,14 @@ def build_articulated(
     kp: float = 300.0,
     bar_height: float = DEFAULT_BAR_HEIGHT,
 ) -> mujoco.MjModel:
-    """A serial chain of ``n_seg`` rigid segments along the bar (y) axis.
+    """A serial chain of ``n_seg`` rigid segments along the local x axis.
 
-    Straight at rest; hinge joints (axis x) let it curve in the bar/z plane into
-    a ∩. Each hinge has a position servo so a scripted open-loop trajectory
-    (:class:`ScriptedArch`) can bend it into the arch during flight. Geoms are
-    non-colliding, so the COM stays ballistic and the only thing that changes is
-    the body's configuration.
+    Straight at rest; hinge joints (axis +y) let it curve in the local x-z plane
+    into a ∩. Each hinge has a position servo so a scripted open-loop trajectory
+    (:class:`ScriptedArch`) bends it into the arch during flight; ``simulate``
+    then yaws the whole body to the approach heading. Geoms collide with the
+    crossbar only (``contype=2``), so the chain does not self-collide and stays
+    ballistic until/unless it clips the bar.
     """
     inner = ""
     for i in reversed(range(n_seg)):
@@ -145,7 +149,7 @@ def build_articulated(
         )
         geom = (
             f'<geom type="capsule" fromto="0 0 0 {seg_len} 0 0" size="{radius}" '
-            f'contype="0" conaffinity="0" rgba="0.3 0.7 0.4 1"/>'
+            f'contype="2" conaffinity="0" rgba="0.3 0.7 0.4 1"/>'
         )
         inner = f'<body name="{name}" pos="{pos}">{free}{joint}{geom}{inner}</body>'
 
@@ -265,41 +269,44 @@ def simulate(
 
 
 def compare(takeoff: Takeoff | None = None, clearance_margin: float = 0.12) -> None:
-    """Run the ladder and print the COM-vs-clearance comparison."""
-    takeoff = takeoff or Takeoff()
-    t_apex = takeoff.vz / 9.81  # arch should complete near the COM apex
-    rollouts = {
-        "point-mass": simulate(build_point_mass(), takeoff, name="point-mass"),
-        "rigid-arch": simulate(build_rigid_arch(), takeoff, name="rigid-arch"),
-        "articulated": simulate(
-            build_articulated(),
-            takeoff,
-            name="articulated",
-            controller=ScriptedArch(t_full=t_apex),
-        ),
-    }
+    """Run the ladder and print the COM-vs-clearance comparison.
 
-    com_peak = peak_com_height(rollouts["point-mass"])  # identical across models
-    bar = com_peak + clearance_margin
+    The bar is placed ``clearance_margin`` above the (model-independent) ballistic
+    COM apex, and the athletes now physically collide with it, so ``bar knocked``
+    reports whether the body actually ran into the bar -- exposing that a high
+    body-top alone is not a clean clearance.
+    """
+    takeoff = takeoff or Takeoff()
+    t_apex = takeoff.vz / 9.81
+    com_apex = takeoff.com_height + takeoff.vz**2 / (2 * 9.81)
+    bar = com_apex + clearance_margin
+
+    rollouts = {
+        "point-mass": simulate(build_point_mass(bar_height=bar), takeoff,
+                               name="point-mass"),
+        "rigid-arch": simulate(build_rigid_arch(bar_height=bar), takeoff,
+                               name="rigid-arch"),
+        "articulated": simulate(build_articulated(bar_height=bar), takeoff,
+                                name="articulated",
+                                controller=ScriptedArch(t_full=t_apex)),
+    }
 
     print(f"takeoff: speed={takeoff.speed} m/s  angle={takeoff.angle_deg} deg  "
           f"COM height={takeoff.com_height} m")
-    print(f"COM apex (ballistic, model-independent): {com_peak:.3f} m")
-    print(f"test bar set {clearance_margin:.2f} m above COM apex -> {bar:.3f} m\n")
+    print(f"COM apex (ballistic, model-independent): {com_apex:.3f} m")
+    print(f"bar set {clearance_margin:.2f} m above the COM apex -> {bar:.3f} m\n")
     print(f"{'model':<12}{'COM apex':>10}{'body top':>10}{'reach':>8}"
-          f"{'clears bar':>12}{'COM below bar':>15}")
+          f"{'bar knocked':>13}{'COM below bar':>15}")
     for name, r in rollouts.items():
-        top = peak_body_top(r)
-        reach = body_reach_over_com(r)
-        clears = top >= bar
-        below = bar - peak_com_height(r)
-        print(f"{name:<12}{peak_com_height(r):>10.3f}{top:>10.3f}{reach:>8.3f}"
-              f"{str(clears):>12}{below:>15.3f}")
+        print(f"{name:<12}{peak_com_height(r):>10.3f}{peak_body_top(r):>10.3f}"
+              f"{body_reach_over_com(r):>8.3f}{str(bar_knocked(r)):>13}"
+              f"{bar - peak_com_height(r):>15.3f}")
 
-    print("\nAll three share one ballistic COM apex. The point mass cannot clear a "
-          "bar above it; the rigid arch can (static drape); the articulated body "
-          "reaches the same advantage dynamically -- taking off straight and "
-          "arching into the ∩ in flight, the precursor to real flop technique.")
+    print("\nWith collision on: the point mass passes under the bar (never reaches "
+          "it); the arch and articulated bodies top the bar but their flanks still "
+          "clip it and knock it off -- so topping the bar is not clearing it. A real "
+          "clearance needs the body to drape around the bar, which costs extra "
+          "height: the honest target for the muscle controller to beat.")
 
 
 if __name__ == "__main__":

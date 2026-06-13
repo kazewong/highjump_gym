@@ -28,6 +28,7 @@ from highjump_gym.fidelity import (
     build_rigid_arch,
     simulate,
 )
+from highjump_gym.analysis import bar_knocked
 from highjump_gym.jump_model import Rollout
 
 GRAVITY = 9.81
@@ -89,6 +90,7 @@ def main() -> None:
             duration=RENDER_SECONDS,
         )
         render_rollout(model, r, f"fidelity_{name}.mp4", bar_height)
+        print(f"  {name}: bar knocked = {bar_knocked(r)}")
 
 
 if __name__ == "__main__":
