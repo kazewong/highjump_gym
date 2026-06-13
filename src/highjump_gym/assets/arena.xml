@@ -1,0 +1,65 @@
+<mujoco model="highjump_arena">
+  <!-- High-jump arena: runway, landing mat, two standards, and a knockable
+       crossbar. Authored as a standalone model (loadable on its own for
+       debugging) and merged onto the MS-Human-700 model by loader.py.
+
+       The crossbar is a separate free body resting on two support pegs, so a
+       jumper clipping it produces a real, detectable displacement (it falls)
+       rather than only a contact force. Bar height is set by loader.py via
+       _set_bar_height(); the values below are the DEFAULT_BAR_HEIGHT layout. -->
+  <compiler angle="radian"/>
+
+  <default>
+    <default class="arena">
+      <geom contype="1" conaffinity="1" condim="3"/>
+    </default>
+  </default>
+
+  <asset>
+    <material name="mat_runway" rgba="0.55 0.20 0.18 1"/>
+    <material name="mat_standard" rgba="0.20 0.20 0.25 1"/>
+    <material name="mat_bar" rgba="0.95 0.85 0.20 1"/>
+    <material name="mat_pad" rgba="0.20 0.40 0.80 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="arena_light" pos="0 0 5" dir="0 0 -1" directional="true"/>
+
+    <!-- runway / ground plane -->
+    <geom name="arena_floor" class="arena" type="plane" size="0 0 0.05"
+          material="mat_runway"/>
+
+    <!-- landing mat: soft box behind the bar (top at z=0.6) -->
+    <geom name="landing_mat" class="arena" type="box" size="1.0 2.0 0.3"
+          pos="2.0 0 0.3" material="mat_pad"
+          solref="0.04 1" solimp="0.85 0.92 0.02"
+          friction="1.0 0.005 0.0001"/>
+
+    <!-- standards (uprights), set just outboard of the 4 m bar so the poles
+         clear the bar ends. Each has a flat support peg cantilevered inboard
+         that catches the bar end, exactly as on a real high-jump setup -- the
+         bar simply rests on the two pegs. loader._set_bar_height() sets height. -->
+    <body name="standard_l" pos="1.0 2.06 0">
+      <geom name="pole_l" class="arena" type="capsule" fromto="0 0 0 0 0 2.6"
+            size="0.03" material="mat_standard"/>
+      <geom name="peg_l" class="arena" type="box" size="0.05 0.04 0.008"
+            pos="0 -0.08 2.0" condim="6" material="mat_standard"/>
+    </body>
+    <body name="standard_r" pos="1.0 -2.06 0">
+      <geom name="pole_r" class="arena" type="capsule" fromto="0 0 0 0 0 2.6"
+            size="0.03" material="mat_standard"/>
+      <geom name="peg_r" class="arena" type="box" size="0.05 0.04 0.008"
+            pos="0 0.08 2.0" condim="6" material="mat_standard"/>
+    </body>
+
+    <!-- crossbar: free body resting on the pegs (1 mm settle gap), knockable.
+         condim=6 + a little rolling/torsional friction stops the round bar from
+         creeping off on its own, while a real clip still knocks it down. -->
+    <body name="crossbar" pos="1.0 0 2.024">
+      <freejoint name="crossbar_free"/>
+      <geom name="crossbar" class="arena" type="capsule" fromto="0 -2.0 0 0 2.0 0"
+            size="0.015" mass="0.5" condim="6" friction="1.0 0.02 0.02"
+            material="mat_bar"/>
+    </body>
+  </worldbody>
+</mujoco>
