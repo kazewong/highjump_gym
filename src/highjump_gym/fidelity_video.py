@@ -21,7 +21,9 @@ import mujoco
 import numpy as np
 
 from highjump_gym.fidelity import (
+    ARTICULATED_APEX_OFFSET,
     ARTICULATED_TAKEOFF_ROTATION_DEG,
+    ARTICULATED_TAKEOFF_SPIN_DEG,
     ScriptedArch,
     Takeoff,
     build_articulated,
@@ -34,7 +36,7 @@ from highjump_gym.jump_model import Rollout
 
 GRAVITY = 9.81
 RENDER_FPS = 30
-RENDER_SECONDS = 0.9  # up, over, and starting back down -- before it nears the floor
+RENDER_SECONDS = 2  # up, over, and starting back down -- before it nears the floor
 
 
 def _camera(bar_height: float) -> mujoco.MjvCamera:
@@ -75,21 +77,23 @@ def main() -> None:
     takeoff = Takeoff()
     t_apex = takeoff.vz / GRAVITY
     com_apex = takeoff.com_height + takeoff.vz**2 / (2 * GRAVITY)
-    bar_height = com_apex + 0.12  # match compare(): bar just above the COM apex
+    bar_height = com_apex + 0.0  # match compare(): bar just above the COM apex
 
-    # (name, model, controller, takeoff_rotation_deg)
+    # (name, model, controller, takeoff_rotation_deg, takeoff_spin_deg, apex_offset)
     jobs = [
-        ("point_mass", build_point_mass(bar_height=bar_height), None, 0.0),
-        ("rigid_arch", build_rigid_arch(bar_height=bar_height), None, 0.0),
+        ("point_mass", build_point_mass(bar_height=bar_height), None, 0.0, 0.0, 0.0),
+        ("rigid_arch", build_rigid_arch(bar_height=bar_height), None, 0.0, 0.0, 0.0),
         ("articulated", build_articulated(bar_height=bar_height),
-         ScriptedArch(t_full=t_apex), ARTICULATED_TAKEOFF_ROTATION_DEG),
+         ScriptedArch(t_full=t_apex), ARTICULATED_TAKEOFF_ROTATION_DEG,
+         ARTICULATED_TAKEOFF_SPIN_DEG, ARTICULATED_APEX_OFFSET),
     ]
 
     print(f"bar at {bar_height:.3f} m (COM apex {com_apex:.3f} m)")
-    for name, model, controller, rotation in jobs:
+    for name, model, controller, rotation, spin, offset in jobs:
         r = simulate(
             model, takeoff, name=name, controller=controller,
             duration=RENDER_SECONDS, takeoff_rotation_deg=rotation,
+            takeoff_spin_deg=spin, apex_offset=offset,
         )
         render_rollout(model, r, f"fidelity_{name}.mp4", bar_height)
         print(f"  {name}: bar knocked = {bar_knocked(r)}")

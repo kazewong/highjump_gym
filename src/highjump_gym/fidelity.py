@@ -47,9 +47,16 @@ from highjump_gym.loader import DEFAULT_BAR_HEIGHT, merge_with_arena
 ATHLETE_BODY = "athlete"
 ATHLETE_JOINT = "athlete_free"
 
-# Upright-torso takeoff for the articulated rung: pitch up this much at takeoff
-# and rotate toward flat by the apex, so the body sweeps over the bar.
-ARTICULATED_TAKEOFF_ROTATION_DEG = 80.0
+# Articulated-rung takeoff tuning (the body sweeps over the bar as it arches):
+#   ROTATION_DEG -- takeoff torso pitch (how upright it leaves the ground).
+#   SPIN_DEG     -- angular momentum (angle it would rotate over the rise). The
+#                   arch shrinks the body's inertia mid-flight, so it over-spins;
+#                   keep this below ROTATION_DEG to land near flat at the bar.
+#   APEX_OFFSET  -- shift of the COM apex along the heading; negative pulls the
+#                   takeoff back toward the runway (away from the pit).
+ARTICULATED_TAKEOFF_ROTATION_DEG = 75.0
+ARTICULATED_TAKEOFF_SPIN_DEG = 70.0
+ARTICULATED_APEX_OFFSET = -0.2
 
 
 @dataclass
@@ -240,6 +247,8 @@ def simulate(
     approach_angle_deg: float = 30.0,
     from_left: bool = True,
     takeoff_rotation_deg: float = 0.0,
+    takeoff_spin_deg: float | None = None,
+    apex_offset: float = 0.0,
 ) -> Rollout:
     """Launch the athlete ballistically from ``takeoff`` and record the rollout.
 
@@ -247,17 +256,25 @@ def simulate(
     travel -- runs at ``approach_angle_deg`` off the bar line (0 deg = parallel,
     the Fosbury flop; 90 deg = straight across). ``from_left`` flips which side
     of the bar the athlete enters from. The takeoff point is chosen so the COM
-    apex passes over the centre of the bar, making "does it clear" well posed.
+    apex passes over the centre of the bar (shifted by ``apex_offset`` along the
+    heading; negative pulls it back toward the takeoff side), making "does it
+    clear" well posed.
 
-    ``takeoff_rotation_deg`` makes the body take off pitched up by that angle
-    (an upright torso) and rotate forward toward horizontal by the apex, driven
-    by takeoff angular momentum -- so the body sweeps over the bar rather than
-    crossing flat all at once. 0 keeps it flat throughout. The COM velocity is
-    held equal to the launch velocity regardless of the spin.
+    Two decoupled rotation knobs:
 
-    ``controller`` defaults to a passive (no-drive) model; an articulated body
-    is driven by a :class:`ScriptedArch`.
+    * ``takeoff_rotation_deg`` -- the takeoff torso pitch (how upright the body
+      leaves the ground).
+    * ``takeoff_spin_deg`` -- the angular momentum, as the angle the body would
+      rotate over the rise to the apex. Defaults to ``takeoff_rotation_deg`` (so
+      a body pitched up by P and spun by P arrives flat at the apex absent any
+      inertia change); raise/lower it independently to tune the rotation rate.
+
+    The COM velocity is held equal to the launch velocity regardless of the spin.
+    ``controller`` defaults to a passive (no-drive) model; an articulated body is
+    driven by a :class:`ScriptedArch`.
     """
+    if takeoff_spin_deg is None:
+        takeoff_spin_deg = takeoff_rotation_deg
     if controller is None:
         controller = ConstantActivation(level=0.0, name=name)
     local_offset, bar_x = _scene_refs(model)
@@ -275,17 +292,23 @@ def simulate(
     q_apex = _axis_angle(np.array([0.0, 0.0, 1.0]), yaw)
 
     # Somersault axis: horizontal, perpendicular to the heading. The body takes
-    # off pitched up by `rot` about it (upright) and rotates back to flat over
-    # t_apex; angular momentum (constant) carries the rotation.
+    # off pitched up by `pitch` about it (upright); a separate `spin` sets the
+    # angular momentum (the angle it would rotate over the rise to the apex).
     pitch_axis = np.array([heading[1], -heading[0], 0.0])
-    rot = math.radians(takeoff_rotation_deg)
-    q0 = _quat_mul(_axis_angle(pitch_axis, rot), q_apex)
-    omega_world = -(rot / t_apex) * pitch_axis if t_apex > 0 else np.zeros(3)
+    pitch = math.radians(takeoff_rotation_deg)
+    spin = math.radians(takeoff_spin_deg)
+    q0 = _quat_mul(_axis_angle(pitch_axis, pitch), q_apex)
+    omega_world = -(spin / t_apex) * pitch_axis if t_apex > 0 else np.zeros(3)
 
-    # Takeoff point so the COM apex is over the bar centre (x=bar_x, y=0).
+    # Takeoff point so the COM apex lands ``apex_offset`` m downrange of the bar
+    # centre along the heading (0 = apex over the bar; >0 crosses the bar before
+    # the apex, while still rising).
     world_offset = _rotate(local_offset, q0)
     vel = takeoff.vx * heading + np.array([0.0, 0.0, takeoff.vz])
-    com0 = np.array([bar_x - vel[0] * t_apex, -vel[1] * t_apex, takeoff.com_height])
+    shift = apex_offset - takeoff.vx * t_apex
+    com0 = np.array(
+        [bar_x + shift * heading[0], shift * heading[1], takeoff.com_height]
+    )
     root_pos = com0 - world_offset
 
     # Free-joint velocities: keep the COM velocity equal to `vel` despite the
@@ -314,7 +337,7 @@ def simulate(
     )
 
 
-def compare(takeoff: Takeoff | None = None, clearance_margin: float = 0.12) -> None:
+def compare(takeoff: Takeoff | None = None, clearance_margin: float = 0.08) -> None:
     """Run the ladder and print the COM-vs-clearance comparison.
 
     The bar is placed ``clearance_margin`` above the (model-independent) ballistic
@@ -335,7 +358,9 @@ def compare(takeoff: Takeoff | None = None, clearance_margin: float = 0.12) -> N
         "articulated": simulate(build_articulated(bar_height=bar), takeoff,
                                 name="articulated",
                                 controller=ScriptedArch(t_full=t_apex),
-                                takeoff_rotation_deg=ARTICULATED_TAKEOFF_ROTATION_DEG),
+                                takeoff_rotation_deg=ARTICULATED_TAKEOFF_ROTATION_DEG,
+                                takeoff_spin_deg=ARTICULATED_TAKEOFF_SPIN_DEG,
+                                apex_offset=ARTICULATED_APEX_OFFSET),
     }
 
     print(f"takeoff: speed={takeoff.speed} m/s  angle={takeoff.angle_deg} deg  "
