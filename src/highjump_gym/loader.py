@@ -42,6 +42,20 @@ def _set_z(element, z: float) -> None:
     element.pos = pos
 
 
+def _zero_contact_margins(spec: mujoco.MjSpec) -> None:
+    """Clear ``margin``/``gap`` on every geom.
+
+    MJX-JAX implements the PLANE/MESH/etc. collision pairs this model needs, but
+    not contact ``margin``/``gap`` (it raises ``NotImplementedError`` on the
+    plane-mesh pelvis/floor contact). The MS-Human-700 model sets a global
+    ``margin="0.001"`` default, so we explicitly zero it everywhere. The effect
+    on CPU contact is negligible (1 mm) and it makes the scene MJX-steppable.
+    """
+    for geom in spec.geoms:
+        geom.margin = 0.0
+        geom.gap = 0.0
+
+
 def _set_bar_height(arena: mujoco.MjSpec, height: float) -> None:
     """Place the crossbar and the two support pegs at ``height`` metres.
 
@@ -69,6 +83,8 @@ def make_scene_spec(bar_height: float = DEFAULT_BAR_HEIGHT) -> mujoco.MjSpec:
 
     frame = human.worldbody.add_frame()
     human.attach(arena, frame=frame, prefix="arena-")
+
+    _zero_contact_margins(human)  # make the merged scene MJX-steppable
     return human
 
 
