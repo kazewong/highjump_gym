@@ -98,14 +98,16 @@ def build_rigid_arch(
     """A rigid arch draping downward in the bar (y-z) plane.
 
     Apex at the body-frame origin (local z=0), legs sagging to ``-sag``, so the
-    COM sits below the apex. Spanning the bar direction (y), it can pass over the
-    bar with its COM below the apex -- the geometric basis of the flop.
+    COM sits below the apex. Built along the local x axis (arching up in the
+    local x-z plane); ``simulate`` then yaws the whole body to the approach
+    heading. It can pass over the bar with its COM below the apex -- the
+    geometric basis of the flop.
     """
-    ys = np.linspace(-span / 2, span / 2, n_seg + 1)
-    zs = -sag * (2 * ys / span) ** 2  # parabola, apex (0,0), legs at -sag
+    xs = np.linspace(-span / 2, span / 2, n_seg + 1)
+    zs = -sag * (2 * xs / span) ** 2  # parabola, apex (0,0), legs at -sag
     segments = "".join(
         f'      <geom type="capsule" size="{radius}" '
-        f'fromto="0 {ys[i]:.4f} {zs[i]:.4f} 0 {ys[i + 1]:.4f} {zs[i + 1]:.4f}" '
+        f'fromto="{xs[i]:.4f} 0 {zs[i]:.4f} {xs[i + 1]:.4f} 0 {zs[i + 1]:.4f}" '
         f'contype="0" conaffinity="0" rgba="0.3 0.5 0.9 1"/>\n'
         for i in range(n_seg)
     )
@@ -131,16 +133,18 @@ def build_articulated(
     inner = ""
     for i in reversed(range(n_seg)):
         name = ATHLETE_BODY if i == 0 else f"seg{i}"
-        pos = "0 0 0" if i == 0 else f"0 {seg_len} 0"
+        pos = "0 0 0" if i == 0 else f"{seg_len} 0 0"
         free = f'<freejoint name="{ATHLETE_JOINT}"/>' if i == 0 else ""
+        # hinge axis +y so positive servo angles arch the chain upward (∩) in
+        # the local x-z plane; simulate() yaws the whole body to the heading.
         joint = (
             ""
             if i == 0
-            else f'<joint name="hinge{i}" type="hinge" axis="1 0 0" '
+            else f'<joint name="hinge{i}" type="hinge" axis="0 1 0" '
             f'damping="{joint_damping}"/>'
         )
         geom = (
-            f'<geom type="capsule" fromto="0 0 0 0 {seg_len} 0" size="{radius}" '
+            f'<geom type="capsule" fromto="0 0 0 {seg_len} 0 0" size="{radius}" '
             f'contype="0" conaffinity="0" rgba="0.3 0.7 0.4 1"/>'
         )
         inner = f'<body name="{name}" pos="{pos}">{free}{joint}{geom}{inner}</body>'
@@ -201,31 +205,53 @@ def simulate(
     name: str = "athlete",
     controller: JumpModel | None = None,
     duration: float = 1.2,
-    align_apex_to_bar: bool = True,
+    approach_angle_deg: float = 30.0,
+    from_left: bool = True,
 ) -> Rollout:
     """Launch the athlete ballistically from ``takeoff`` and record the rollout.
 
-    The takeoff x is chosen so the COM apex sits over the bar, so the body's
-    highest point at the bar is its peak -- making "does it clear" well posed.
+    The body (built along local x) is yawed so its long axis -- and its line of
+    travel -- runs at ``approach_angle_deg`` off the bar line (0 deg = parallel,
+    the Fosbury flop; 90 deg = straight across). ``from_left`` flips which side
+    of the bar the athlete enters from. The takeoff point is chosen so the COM
+    apex passes over the centre of the bar, making "does it clear" well posed.
+
     ``controller`` defaults to a passive (no-drive) model; an articulated body
     is driven by a :class:`ScriptedArch`. The body starts straight with zero
     joint velocity, so its COM velocity at takeoff equals the launch velocity.
     """
     if controller is None:
         controller = ConstantActivation(level=0.0, name=name)
-    com_offset, bar_x = _scene_refs(model)
+    local_offset, bar_x = _scene_refs(model)
     g = -float(model.opt.gravity[2])
     t_apex = takeoff.vz / g
-    x0 = bar_x - takeoff.vx * t_apex if align_apex_to_bar else 0.0
+
+    # Horizontal heading: angle off the bar line (y), tilted toward crossing the
+    # bar (+x). from_left sets the side the athlete enters from.
+    a = math.radians(approach_angle_deg)
+    side = -1.0 if from_left else 1.0
+    heading = np.array([math.sin(a), side * math.cos(a), 0.0])
+
+    # Yaw the body about z so its local-x long axis points along the heading.
+    yaw = math.atan2(heading[1], heading[0])
+    quat = np.array([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)])
+    world_offset = np.zeros(3)
+    mujoco.mju_rotVecQuat(world_offset, local_offset, quat)
+
+    # Global launch velocity, and a takeoff point putting the COM apex over the
+    # centre of the bar (x = bar_x, y = 0 at t_apex).
+    vel = takeoff.vx * heading + np.array([0.0, 0.0, takeoff.vz])
+    com0 = np.array([bar_x - vel[0] * t_apex, -vel[1] * t_apex, takeoff.com_height])
+    root_pos = com0 - world_offset
 
     jid = model.joint(ATHLETE_JOINT).id
     q = int(model.jnt_qposadr[jid])
     d = int(model.jnt_dofadr[jid])
 
     def init(model: mujoco.MjModel, data: mujoco.MjData) -> None:
-        data.qpos[q : q + 3] = np.array([x0, 0.0, takeoff.com_height]) - com_offset
-        data.qpos[q + 3 : q + 7] = (1.0, 0.0, 0.0, 0.0)
-        data.qvel[d : d + 3] = (takeoff.vx, 0.0, takeoff.vz)
+        data.qpos[q : q + 3] = root_pos
+        data.qpos[q + 3 : q + 7] = quat
+        data.qvel[d : d + 3] = vel
         data.qvel[d + 3 : d + 6] = 0.0
 
     return rollout(
