@@ -48,6 +48,28 @@ def bar_knocked(r: Rollout, drop_threshold: float = 0.1) -> bool:
     return bool((z0 - r.bar_pos[:, VERTICAL_AXIS]).max() > drop_threshold)
 
 
+def peak_body_top(r: Rollout) -> float:
+    """Highest point any athlete geom reaches (m). Requires ``top_body`` tracking."""
+    _require_top(r)
+    return float(r.athlete_top.max())
+
+
+def body_reach_over_com(r: Rollout) -> float:
+    """Max height the body's top extends above its own COM (m).
+
+    This is the fidelity-ladder payload: for a point mass it is ~the geom radius,
+    but for an extended/arched body it is how much higher than the COM the body
+    can clear -- i.e. how far the COM may pass *below* the bar.
+    """
+    _require_top(r)
+    return float((r.athlete_top - r.com[:, VERTICAL_AXIS]).max())
+
+
+def _require_top(r: Rollout) -> None:
+    if r.athlete_top is None:
+        raise ValueError("rollout has no athlete_top; pass top_body= to rollout()")
+
+
 def peak_tendon_force(r: Rollout) -> float:
     """Largest magnitude actuator/tendon force over the whole rollout (N)."""
     return float(np.abs(r.actuator_force).max())

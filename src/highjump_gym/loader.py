@@ -68,24 +68,35 @@ def _set_bar_height(arena: mujoco.MjSpec, height: float) -> None:
     _set_z(_find(arena.bodies, "crossbar"), height + 0.024)
 
 
+def merge_with_arena(
+    athlete: mujoco.MjSpec, bar_height: float = DEFAULT_BAR_HEIGHT
+) -> mujoco.MjSpec:
+    """Attach the high-jump arena to an arbitrary ``athlete`` spec (in place).
+
+    Used for both the MS-Human-700 model and the lower-fidelity bodies in
+    ``fidelity.py`` so they all share one arena, bar, and analysis pipeline.
+    Arena elements are merged under the ``arena-`` prefix; the bar is set to
+    ``bar_height``; any stale keyframes on the athlete (whose qpos length would
+    no longer match after the crossbar free joint is added) are dropped; and all
+    contact margins are zeroed so the scene steps under MJX.
+    """
+    arena = mujoco.MjSpec.from_file(str(ARENA_XML))
+    _set_bar_height(arena, bar_height)
+
+    for key in list(athlete.keys):
+        athlete.delete(key)
+
+    frame = athlete.worldbody.add_frame()
+    athlete.attach(arena, frame=frame, prefix="arena-")
+
+    _zero_contact_margins(athlete)
+    return athlete
+
+
 def make_scene_spec(bar_height: float = DEFAULT_BAR_HEIGHT) -> mujoco.MjSpec:
     """Return an ``MjSpec`` of the MS-Human-700 model merged with the arena."""
     human = mujoco.MjSpec.from_file(str(HUMAN_XML))
-    arena = mujoco.MjSpec.from_file(str(ARENA_XML))
-
-    _set_bar_height(arena, bar_height)
-
-    # The human model ships a keyframe whose qpos length equals its own nq.
-    # Adding the crossbar free joint changes nq, so the stale key would fail to
-    # compile -- drop it and start from the default standing pose instead.
-    for key in list(human.keys):
-        human.delete(key)
-
-    frame = human.worldbody.add_frame()
-    human.attach(arena, frame=frame, prefix="arena-")
-
-    _zero_contact_margins(human)  # make the merged scene MJX-steppable
-    return human
+    return merge_with_arena(human, bar_height)
 
 
 def load_scene(bar_height: float = DEFAULT_BAR_HEIGHT) -> mujoco.MjModel:
