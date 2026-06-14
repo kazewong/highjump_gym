@@ -13,13 +13,7 @@ Rendering needs a GL backend; set ``MUJOCO_GL=egl`` (headless GPU) or
 
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("MUJOCO_GL", "egl")
-
-import mujoco
-import numpy as np
-
+from highjump_gym.analysis import bar_knocked
 from highjump_gym.fidelity import (
     ARTICULATED_APEX_OFFSET,
     ARTICULATED_TAKEOFF_ROTATION_DEG,
@@ -31,46 +25,18 @@ from highjump_gym.fidelity import (
     build_rigid_arch,
     simulate,
 )
-from highjump_gym.analysis import bar_knocked
-from highjump_gym.jump_model import Rollout
+from highjump_gym.render import orbit_camera, render_rollout
 
 GRAVITY = 9.81
-RENDER_FPS = 30
 RENDER_SECONDS = 2  # up, over, and starting back down -- before it nears the floor
 
 
-def _camera(bar_height: float) -> mujoco.MjvCamera:
+def _camera(bar_height: float):
     """View looking face-on to the arch plane (~perpendicular to the 30-deg,
     from-left approach heading), so the ∩ arch and the COM-under-bar clearance
     read clearly. A small elevation keeps a little depth."""
-    cam = mujoco.MjvCamera()
-    cam.lookat = np.array([1.0, 0.0, bar_height - 0.2])
-    cam.distance = 8.0
-    cam.azimuth = 30.0
-    cam.elevation = -10.0
-    return cam
-
-
-def render_rollout(
-    model: mujoco.MjModel, r: Rollout, path: str, bar_height: float
-) -> None:
-    """Replay a rollout's qpos through the renderer and write an mp4."""
-    import imageio.v2 as imageio
-
-    cam = _camera(bar_height)
-    every = max(1, int(round(1.0 / (RENDER_FPS * model.opt.timestep))))
-    data = mujoco.MjData(model)
-
-    frames = []
-    with mujoco.Renderer(model, height=480, width=640) as renderer:
-        for i in range(0, len(r.time), every):
-            data.qpos[:] = r.qpos[i]
-            mujoco.mj_forward(model, data)
-            renderer.update_scene(data, camera=cam)
-            frames.append(renderer.render())
-
-    imageio.mimwrite(path, frames, fps=RENDER_FPS)
-    print(f"  wrote {len(frames)} frames -> {path}")
+    return orbit_camera(lookat=[1.0, 0.0, bar_height - 0.2], distance=8.0,
+                        azimuth=30.0, elevation=-10.0)
 
 
 def main() -> None:
@@ -95,7 +61,7 @@ def main() -> None:
             duration=RENDER_SECONDS, takeoff_rotation_deg=rotation,
             takeoff_spin_deg=spin, apex_offset=offset,
         )
-        render_rollout(model, r, f"fidelity_{name}.mp4", bar_height)
+        render_rollout(model, r, f"fidelity_{name}.mp4", camera=_camera(bar_height))
         print(f"  {name}: bar knocked = {bar_knocked(r)}")
 
 

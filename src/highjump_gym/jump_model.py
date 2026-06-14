@@ -107,7 +107,7 @@ def rollout(
 
     root_id = model.body(human_root).id
     bar_id = model.body(bar_body).id
-    top_geoms = _subtree_geom_ids(model, top_body) if top_body is not None else None
+    top_geoms = subtree_geom_ids(model, top_body) if top_body is not None else None
     n_steps = int(round(duration / model.opt.timestep))
 
     keys = (
@@ -150,7 +150,7 @@ def rollout(
     )
 
 
-def _subtree_geom_ids(model: mujoco.MjModel, body_name: str) -> np.ndarray:
+def subtree_geom_ids(model: mujoco.MjModel, body_name: str) -> np.ndarray:
     """Geom indices for the whole subtree rooted at ``body_name``.
 
     Spans every segment of a multi-body athlete (e.g. an articulated chain), not

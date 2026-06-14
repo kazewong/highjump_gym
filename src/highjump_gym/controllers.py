@@ -125,7 +125,7 @@ T_SETTLE = 0.25   # hold the crouch so the feet settle flat on the floor
 T_PUSH = 0.18     # crouch -> full extension (explosive concentric phase)
 # After T_SETTLE + T_PUSH the body is airborne; hold EXTEND_POSE.
 
-# Foot skin geoms used to drop the crouch onto the floor (see CountermovementJump.init).
+# Foot skin geoms used to drop the crouch onto the floor (see SquatJump.init).
 _FOOT_GEOM_KEYS = ("calcn_skin", "toes_skin")
 FOOT_CLEARANCE = 0.002  # m, gap left under the lowest foot geom at t=0
 

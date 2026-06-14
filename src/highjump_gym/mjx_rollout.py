@@ -33,7 +33,7 @@ import mujoco
 import numpy as np
 from mujoco import mjx
 
-from highjump_gym.jump_model import Rollout, _subtree_geom_ids
+from highjump_gym.jump_model import Rollout, subtree_geom_ids
 
 # A pure-JAX control law: (t, qpos, qvel) -> ctrl of length nu.
 ControlFn = Callable[[jax.Array, jax.Array, jax.Array], jax.Array]
@@ -55,7 +55,7 @@ def _refs(
     return _Refs(
         root_id=model.body(root_body).id,
         bar_id=model.body(bar_body).id,
-        top_geoms=_subtree_geom_ids(model, top_body) if top_body else None,
+        top_geoms=subtree_geom_ids(model, top_body) if top_body else None,
         dt=float(model.opt.timestep),
     )
 
